@@ -81,7 +81,7 @@ impl EventHandler {
                         }
                     })
                     .unwrap_or((0.0, 0.0));
-                println!("Speed: {} {}", speed_x, speed_y);
+                // println!("Speed: {} {}", speed_x, speed_y);
 
                 let min_speed = 0.0005;
                 if speed_x.abs() < min_speed && speed_y.abs() < min_speed {
