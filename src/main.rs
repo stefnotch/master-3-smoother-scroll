@@ -1,8 +1,7 @@
 #![feature(unboxed_closures, fn_traits)]
 
-use rdev::{grab, Event, EventType, Key, MouseScrollDelta};
+use rdev::{grab, Event, EventType, EventTypes, MouseScrollDelta};
 use std::{
-    collections::VecDeque,
     sync::{Arc, Mutex},
     time::{self, Duration},
 };
@@ -11,7 +10,13 @@ fn main() {
     // This will block.
     let handler = EventHandler::new();
     let callback = move |event: Event| handler.callback(event);
-    if let Err(error) = grab(callback) {
+    if let Err(error) = grab(
+        EventTypes {
+            keyboard: false,
+            mouse: true,
+        },
+        callback,
+    ) {
         println!("Error: {:?}", error)
     }
 }
