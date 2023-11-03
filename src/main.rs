@@ -1,10 +1,45 @@
+#![windows_subsystem = "windows"]
+mod app_config;
+
 use rdev::{grab, Event, EventType, EventTypes, MouseScrollDelta};
 use std::{
     sync::{Arc, Mutex},
     time::{self},
 };
+use tracing::{error, info};
+use tracing_subscriber::FmtSubscriber;
 
-fn main() {
+use crate::app_config::read_config;
+
+fn initialize_logging() -> Result<(), Box<dyn std::error::Error>> {
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(tracing::Level::INFO)
+        .finish();
+
+    tracing::subscriber::set_global_default(subscriber)?;
+
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    initialize_logging()?;
+    info!("Starting application");
+
+    let config = read_config()?;
+    if config.log_to_file {
+        // Configure a file logger if log_to_file is enabled
+        let file_appender = tracing_appender::rolling::daily("logs", "app.log");
+        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+        let file_subscriber = tracing_subscriber::FmtSubscriber::builder()
+            .with_writer(non_blocking)
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        tracing::subscriber::set_global_default(file_subscriber)?;
+        info!("Logging to file is enabled");
+    }
+
+    info!("Config: {:?}", config);
+
     // 120 is the Windows hardcoded number of ticks per normal wheel revolution
     let min_delta_size = 2.0 / 120.0;
     let handler = EventHandler::new(min_delta_size, 100.0);
@@ -16,13 +51,16 @@ fn main() {
         },
         callback,
     ) {
-        println!("Error: {:?}", error)
+        error!("Error: {:?}", error);
     }
+
+    Ok(())
 }
 
 struct EventHandler {
     last_scroll: Arc<Mutex<ScrollWithTimestamp>>,
     last_smoothed_scroll: Arc<Mutex<ScrollWithTimestamp>>,
+    /// How far does the mouse wheel need to be moved to be considered a scroll event?
     min_delta_size: f32,
     /// How many milliseconds it takes until the smoothed signal reaches 63.2% of it's real value.
     time_constant: f32,
@@ -95,6 +133,7 @@ impl EventHandler {
                     || (delta_y.signum() != last_delta.delta_y.signum());
 
                 // We compute an average scroll step (the mouse can sometimes randomly report a slightly higher step, and we wanna get rid of that)
+                // See also https://en.wikipedia.org/wiki/Exponential_smoothing
                 let alpha = 1.0 - f32::exp(-(duration.as_millis() as f32) / self.time_constant);
                 let alpha = alpha.clamp(0.0, 1.0);
                 let alpha = if sign_changed { 1.0 } else { alpha };
