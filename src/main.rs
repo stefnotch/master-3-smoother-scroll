@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod app_config;
 
 use rdev::{grab, Event, EventType, EventTypes, MouseScrollDelta};
@@ -45,8 +45,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 3. https://docs.google.com/spreadsheets/d/1irAZETTmwKNsD2Ho1e1_RrDXjAiplB_sUgW0JJKhyBM/edit#gid=0
     // 4. Oh, so that's why the speed limiting works so well
     let handler = EventHandler::new(EventHandlerConfig {
-        min_speed: 0.05,
+        min_speed: 0.005,
         force_start_distance: 2.9 / 120.0,
+        max_dropped_deltas: (30.0 / 120.0, 30.0 / 120.0),
     });
     let callback = move |event: Event| handler.callback(event);
     if let Err(error) = grab(
@@ -65,10 +66,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 struct EventHandlerConfig {
     min_speed: f32,
     force_start_distance: f32,
+    max_dropped_deltas: (f32, f32),
 }
 
 struct EventHandler {
     last_scroll: Arc<Mutex<ScrollWithTimestamp>>,
+    dropped_deltas: Arc<Mutex<(f32, f32)>>,
     config: EventHandlerConfig,
     // For plotting the data
     _start_time: time::SystemTime,
@@ -95,6 +98,7 @@ impl EventHandler {
     pub fn new(config: EventHandlerConfig) -> Self {
         EventHandler {
             last_scroll: Arc::new(Mutex::new(Default::default())),
+            dropped_deltas: Arc::new(Mutex::new((0.0, 0.0))),
             config,
             _start_time: time::SystemTime::now(),
         }
@@ -106,8 +110,12 @@ impl EventHandler {
                 let timestamp = event.time;
                 let should_keep_event = self.handle_mouse_scroll(timestamp, delta_x, delta_y);
                 if should_keep_event {
+                    *self.dropped_deltas.lock().unwrap() = (0.0, 0.0);
                     Some(event)
                 } else {
+                    let mut dropped_deltas = self.dropped_deltas.lock().unwrap();
+                    *dropped_deltas = (dropped_deltas.0 + delta_x, dropped_deltas.1 + delta_y);
+                    // TODO: Do something with the dropped deltas
                     None
                 }
             }
