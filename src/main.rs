@@ -45,8 +45,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 3. https://docs.google.com/spreadsheets/d/1irAZETTmwKNsD2Ho1e1_RrDXjAiplB_sUgW0JJKhyBM/edit#gid=0
     // 4. Oh, so that's why the speed limiting works so well
     let handler = EventHandler::new(EventHandlerConfig {
-        min_speed: 0.1,
-        force_start_distance: 3.9 / 120.0,
+        min_speed: 0.05,
+        force_start_distance: 2.9 / 120.0,
     });
     let callback = move |event: Event| handler.callback(event);
     if let Err(error) = grab(
