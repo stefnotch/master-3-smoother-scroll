@@ -41,8 +41,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Config: {:?}", config);
 
     // 120 is the Windows hardcoded number of ticks per normal wheel revolution
-    let min_delta_size = 4.0 / 120.0;
-    let handler = EventHandler::new(min_delta_size, 100.0);
+    let handler = EventHandler::new(EventHandlerConfig {
+        min_delta_size: 4.0 / 120.0,
+        min_smoothed_delta_size: 2.0 / 120.0,
+        time_constant: 80.0,
+    });
     let callback = move |event: Event| handler.callback(event);
     if let Err(error) = grab(
         EventTypes {
@@ -57,16 +60,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+struct EventHandlerConfig {
+    /// How far does the smoothed mouse wheel need to be moved to be considered a scroll event?
+    /// Should be smaller than the min_delta_size.
+    min_smoothed_delta_size: f32,
+
+    // How far does the mouse wheel need to be moved to be considered a scroll event?
+    min_delta_size: f32,
+
+    /// How many milliseconds it takes until the smoothed signal reaches 63.2% of it's real value.
+    time_constant: f32,
+}
+
 struct EventHandler {
     last_scroll: Arc<Mutex<ScrollWithTimestamp>>,
     last_smoothed_scroll: Arc<Mutex<ScrollWithTimestamp>>,
     // TODO:
     _dropped_deltas: Arc<Mutex<(f32, f32)>>,
-    /// How far does the mouse wheel need to be moved to be considered a scroll event?
-    min_delta_size: f32,
-    /// How many milliseconds it takes until the smoothed signal reaches 63.2% of it's real value.
-    time_constant: f32,
-
+    config: EventHandlerConfig,
     // For plotting the data
     _start_time: time::SystemTime,
 }
@@ -89,13 +100,12 @@ impl Default for ScrollWithTimestamp {
 }
 
 impl EventHandler {
-    pub fn new(min_delta_size: f32, time_constant: f32) -> Self {
+    pub fn new(config: EventHandlerConfig) -> Self {
         EventHandler {
             last_scroll: Arc::new(Mutex::new(Default::default())),
             last_smoothed_scroll: Arc::new(Mutex::new(Default::default())),
             _dropped_deltas: Arc::new(Mutex::new((0.0, 0.0))),
-            min_delta_size,
-            time_constant,
+            config,
             _start_time: time::SystemTime::now(),
         }
     }
@@ -135,7 +145,9 @@ impl EventHandler {
             Ok(duration) => duration,
             Err(_) => {
                 // Shouldn't really happen. I'll just shoddily fake it then.
-                if delta_x.abs() >= self.min_delta_size && delta_y.abs() >= self.min_delta_size {
+                if delta_x.abs() >= self.config.min_delta_size
+                    && delta_y.abs() >= self.config.min_delta_size
+                {
                     return true;
                 } else {
                     return false;
@@ -148,7 +160,7 @@ impl EventHandler {
 
         // We compute an average scroll step (the mouse can sometimes randomly report a slightly higher step, and we wanna get rid of that)
         // See also https://en.wikipedia.org/wiki/Exponential_smoothing
-        let alpha = 1.0 - f32::exp(-(duration.as_millis() as f32) / self.time_constant);
+        let alpha = 1.0 - f32::exp(-(duration.as_millis() as f32) / self.config.time_constant);
         let alpha = alpha.clamp(0.0, 1.0);
         let alpha = if sign_changed { 1.0 } else { alpha };
         let smoothed_delta = {
@@ -168,12 +180,9 @@ impl EventHandler {
         }
 
         // If the delta is too small, we don't want to keep the event
-        if smoothed_delta.delta_x.abs() < self.min_delta_size
-            && smoothed_delta.delta_y.abs() < self.min_delta_size
-        {
-            return false;
-        } else {
-            return true;
-        }
+        return smoothed_delta.delta_x.abs() >= self.config.min_smoothed_delta_size
+            || smoothed_delta.delta_y.abs() >= self.config.min_smoothed_delta_size
+            || delta_x.abs() >= self.config.min_delta_size
+            || delta_y.abs() >= self.config.min_delta_size;
     }
 }
