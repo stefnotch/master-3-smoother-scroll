@@ -40,11 +40,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Config: {:?}", config);
 
-    // 120 is the Windows hardcoded number of ticks per normal wheel revolution
+    // 1. Plot the scroll values
+    // 2. Plot the speed values
+    // 3. https://docs.google.com/spreadsheets/d/1irAZETTmwKNsD2Ho1e1_RrDXjAiplB_sUgW0JJKhyBM/edit#gid=0
+    // 4. Oh, so that's why the speed limiting works so well
     let handler = EventHandler::new(EventHandlerConfig {
-        min_delta_size: 4.0 / 120.0,
-        min_smoothed_delta_size: 2.0 / 120.0,
-        time_constant: 80.0,
+        min_speed: 0.1,
+        force_start_distance: 3.9 / 120.0,
     });
     let callback = move |event: Event| handler.callback(event);
     if let Err(error) = grab(
@@ -61,22 +63,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 struct EventHandlerConfig {
-    /// How far does the smoothed mouse wheel need to be moved to be considered a scroll event?
-    /// Should be smaller than the min_delta_size.
-    min_smoothed_delta_size: f32,
-
-    // How far does the mouse wheel need to be moved to be considered a scroll event?
-    min_delta_size: f32,
-
-    /// How many milliseconds it takes until the smoothed signal reaches 63.2% of it's real value.
-    time_constant: f32,
+    min_speed: f32,
+    force_start_distance: f32,
 }
 
 struct EventHandler {
     last_scroll: Arc<Mutex<ScrollWithTimestamp>>,
-    last_smoothed_scroll: Arc<Mutex<ScrollWithTimestamp>>,
-    // TODO:
-    _dropped_deltas: Arc<Mutex<(f32, f32)>>,
     config: EventHandlerConfig,
     // For plotting the data
     _start_time: time::SystemTime,
@@ -103,8 +95,6 @@ impl EventHandler {
     pub fn new(config: EventHandlerConfig) -> Self {
         EventHandler {
             last_scroll: Arc::new(Mutex::new(Default::default())),
-            last_smoothed_scroll: Arc::new(Mutex::new(Default::default())),
-            _dropped_deltas: Arc::new(Mutex::new((0.0, 0.0))),
             config,
             _start_time: time::SystemTime::now(),
         }
@@ -131,7 +121,7 @@ impl EventHandler {
             let mut last_delta_mutex = self.last_scroll.lock().unwrap();
             let last_delta = last_delta_mutex.clone();
 
-            if timestamp > last_delta.timestamp {
+            if timestamp >= last_delta.timestamp {
                 *last_delta_mutex = ScrollWithTimestamp {
                     delta_x,
                     delta_y,
@@ -145,34 +135,15 @@ impl EventHandler {
             Ok(duration) => duration,
             Err(_) => {
                 // Shouldn't really happen. I'll just shoddily fake it then.
-                if delta_x.abs() >= self.config.min_delta_size
-                    && delta_y.abs() >= self.config.min_delta_size
-                {
-                    return true;
-                } else {
-                    return false;
-                }
+                return false;
             }
         };
 
         let sign_changed = (delta_x.signum() != last_delta.delta_x.signum())
             || (delta_y.signum() != last_delta.delta_y.signum());
 
-        // We compute an average scroll step (the mouse can sometimes randomly report a slightly higher step, and we wanna get rid of that)
-        // See also https://en.wikipedia.org/wiki/Exponential_smoothing
-        let alpha = 1.0 - f32::exp(-(duration.as_millis() as f32) / self.config.time_constant);
-        let alpha = alpha.clamp(0.0, 1.0);
-        let alpha = if sign_changed { 1.0 } else { alpha };
-        let smoothed_delta = {
-            let mut last_smoothed_delta_mutex = self.last_smoothed_scroll.lock().unwrap();
-            let smoothed_delta = ScrollWithTimestamp {
-                delta_x: delta_x * alpha + last_smoothed_delta_mutex.delta_x * (1.0 - alpha),
-                delta_y: delta_y * alpha + last_smoothed_delta_mutex.delta_y * (1.0 - alpha),
-                timestamp,
-            };
-            *last_smoothed_delta_mutex = smoothed_delta.clone();
-            smoothed_delta
-        };
+        let speed_x = delta_x / (duration.as_millis() as f32);
+        let speed_y = delta_y / (duration.as_millis() as f32);
 
         // If the sign changes, we want to keep the event
         if sign_changed {
@@ -180,9 +151,9 @@ impl EventHandler {
         }
 
         // If the delta is too small, we don't want to keep the event
-        return smoothed_delta.delta_x.abs() >= self.config.min_smoothed_delta_size
-            || smoothed_delta.delta_y.abs() >= self.config.min_smoothed_delta_size
-            || delta_x.abs() >= self.config.min_delta_size
-            || delta_y.abs() >= self.config.min_delta_size;
+        return speed_x.abs() >= self.config.min_speed
+            || speed_y.abs() >= self.config.min_speed
+            || delta_x.abs() >= self.config.force_start_distance
+            || delta_y.abs() >= self.config.force_start_distance;
     }
 }
