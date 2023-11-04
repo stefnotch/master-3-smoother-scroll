@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 4. Oh, so that's why the speed limiting works so well
     let handler = EventHandler::new(EventHandlerConfig {
         min_speed: 0.005,
-        force_start_distance: 2.9 / 120.0,
+        force_start_distance: 3.9 / 120.0,
         max_dropped_deltas: (30.0 / 120.0, 30.0 / 120.0),
     });
     let callback = move |event: Event| handler.callback(event);
@@ -147,16 +147,11 @@ impl EventHandler {
             }
         };
 
-        let sign_changed = (delta_x.signum() != last_delta.delta_x.signum())
+        let _sign_changed = (delta_x.signum() != last_delta.delta_x.signum())
             || (delta_y.signum() != last_delta.delta_y.signum());
 
         let speed_x = delta_x / (duration.as_millis() as f32);
         let speed_y = delta_y / (duration.as_millis() as f32);
-
-        // If the sign changes, we want to keep the event
-        if sign_changed {
-            return true;
-        }
 
         // If the delta is too small, we don't want to keep the event
         return speed_x.abs() >= self.config.min_speed
